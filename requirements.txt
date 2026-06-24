@@ -1,0 +1,12 @@
+# Edge API
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+pydantic==2.10.4
+
+# Sync engine + dashboard
+requests==2.32.3
+streamlit==1.41.1
+
+# NOTE: deliberately no ML / computer-vision libraries yet — domain is undecided
+# and we are keeping this base lightweight for the hackathon window.
