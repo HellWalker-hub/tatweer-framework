@@ -8,6 +8,9 @@ venv/
 # Local edge database (must never be committed)
 *.db
 
+# Cached map tiles (large; regenerate with python -m src.utils.download_tiles)
+local_data/
+
 # Secrets / local config
 .env
 

@@ -11,10 +11,12 @@ Run it with:
 Interactive docs: http://localhost:8000/docs
 """
 
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -29,6 +31,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Sahar-Connect Edge API", version="0.2.0", lifespan=lifespan)
+
+# Serve locally-cached map tiles (if present) so the dashboard map works fully
+# offline. Populate with:  python -m src.utils.download_tiles
+_TILES_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "local_data", "tiles")
+)
+if os.path.isdir(_TILES_DIR):
+    app.mount("/tiles", StaticFiles(directory=_TILES_DIR), name="tiles")
 
 
 def get_db():

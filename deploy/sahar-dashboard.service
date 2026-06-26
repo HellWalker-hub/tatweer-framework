@@ -6,6 +6,9 @@ Wants=sahar-api.service
 [Service]
 User=pi
 WorkingDirectory=/home/pi/tatweer-framework
+# Serve map tiles from the edge node itself (10.42.0.1 = the hotspot IP) so the
+# map works with ZERO internet. Populate tiles with: python -m src.utils.download_tiles
+Environment=TILE_SERVER_URL=http://10.42.0.1:8000/tiles/{z}/{x}/{y}.png
 # CORS/XSRF/compression disabled so the WebSocket works from phones over the
 # offline hotspot (otherwise the app loads but never becomes interactive).
 ExecStart=/home/pi/tatweer-framework/.venv/bin/streamlit run src/dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --server.enableCORS false --server.enableXsrfProtection false --server.enableWebsocketCompression false --browser.gatherUsageStats false

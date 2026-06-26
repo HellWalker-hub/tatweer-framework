@@ -24,6 +24,11 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 EDGE_API_URL = os.getenv("EDGE_API_URL", "http://localhost:8000")
+# Where the map gets its tiles. Default = online OpenStreetMap (works for anyone
+# who clones the repo). On the Pi we override this to the edge node's own /tiles
+# route so the map works with ZERO internet, e.g.:
+#   TILE_SERVER_URL=http://10.42.0.1:8000/tiles/{z}/{x}/{y}.png
+TILE_SERVER_URL = os.getenv("TILE_SERVER_URL", "")
 AL_QUAA = (23.55, 55.50)        # community centre (lat, lon)
 ASSUMED_SPEED_KMH = 40          # desert response vehicle, used for ETA estimates
 
@@ -127,7 +132,19 @@ col_map, col_form = st.columns([2, 1])
 with col_map:
     st.subheader("Community map")
 
-    fmap = folium.Map(location=AL_QUAA, zoom_start=11, control_scale=True)
+    if TILE_SERVER_URL:
+        # Offline: serve tiles from the edge node's local cache.
+        fmap = folium.Map(
+            location=AL_QUAA,
+            zoom_start=11,
+            control_scale=True,
+            tiles=TILE_SERVER_URL,
+            attr="Tiles © Esri — World Imagery (cached offline by Sahar-Connect)",
+            max_zoom=15,
+        )
+    else:
+        # Default: online OpenStreetMap (for anyone running the repo locally).
+        fmap = folium.Map(location=AL_QUAA, zoom_start=11, control_scale=True)
 
     for r in responders:
         available = r["available"]
