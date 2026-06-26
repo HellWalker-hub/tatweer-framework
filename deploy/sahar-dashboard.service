@@ -1,0 +1,16 @@
+[Unit]
+Description=Sahar-Connect Dashboard (Streamlit)
+After=network.target sahar-api.service
+Wants=sahar-api.service
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/tatweer-framework
+# CORS/XSRF/compression disabled so the WebSocket works from phones over the
+# offline hotspot (otherwise the app loads but never becomes interactive).
+ExecStart=/home/pi/tatweer-framework/.venv/bin/streamlit run src/dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --server.enableCORS false --server.enableXsrfProtection false --server.enableWebsocketCompression false --browser.gatherUsageStats false
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
