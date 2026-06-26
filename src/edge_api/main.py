@@ -1,44 +1,37 @@
 """
-main.py — the edge API.
+main.py — the Sahar-Connect edge API.
 
-A small FastAPI app that runs locally at the rural site. Its job for now is
-deliberately simple (this is our domain-agnostic "base idea"):
+Runs locally at the rural site (kiosk / edge node). Core flow:
 
-    capture a request  ->  save it locally  ->  let the sync engine push it later
+    farmer raises an alert  ->  saved locally (never lost)  ->  nearest
+    available responder computed instantly with Haversine  ->  dispatched
 
 Run it with:
     uvicorn src.edge_api.main:app --reload
-
-Interactive docs are auto-generated at http://localhost:8000/docs
+Interactive docs: http://localhost:8000/docs
 """
 
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy.orm import Session
 
-import json
+from .database import EmergencyAlert, ResponderNode, SessionLocal, init_db
+from .routing import find_nearest_responder
 
-from .database import LocalQueue, SessionLocal, init_db
 
-
-# lifespan replaces the deprecated @app.on_event("startup"). Code before `yield`
-# runs once on startup; code after would run on shutdown.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()          # make sure the local database/tables exist
+    init_db()
     yield
 
 
-app = FastAPI(
-    title="Tatweer Rural Edge Framework",
-    version="0.1.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Sahar-Connect Edge API", version="0.2.0", lifespan=lifespan)
 
 
 def get_db():
-    """Hand a fresh database session to a request, and close it afterwards."""
     db = SessionLocal()
     try:
         yield db
@@ -46,25 +39,97 @@ def get_db():
         db.close()
 
 
+# --- request/response models ----------------------------------------------
+class AlertIn(BaseModel):
+    # Accept both our short field names and Gemini's verbose ones, so either
+    # dashboard payload shape works without an integration mismatch.
+    farmer_name: str = "Anonymous Farmer"
+    lat: float = Field(validation_alias=AliasChoices("lat", "latitude"))
+    lon: float = Field(validation_alias=AliasChoices("lon", "longitude"))
+    description: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("description", "landmark_description"),
+    )
+    urgency: str = Field(  # "HIGH" | "CRITICAL"
+        default="HIGH",
+        validation_alias=AliasChoices("urgency", "urgency_level"),
+    )
+
+
+# --- endpoints -------------------------------------------------------------
 @app.get("/health")
 def health_check():
-    """Quick liveness check — also used by the dashboard and (later) the cloud."""
     return {"status": "online", "mode": "edge_node", "location": "Al Qua'a"}
 
 
-@app.post("/submit-request")
-def submit_request(payload: dict, db: Session = Depends(get_db)):
-    """
-    Accept any payload and persist it locally so it is never lost, even with no
-    internet. Expected shape:
-        {"type": "service_request", "data": { ... }}
-    """
-    queue_item = LocalQueue(
-        payload_type=payload.get("type", "generic"),
-        data_payload=json.dumps(payload.get("data", {})),
+@app.post("/alerts/create")
+def create_alert(payload: AlertIn, db: Session = Depends(get_db)):
+    """Log an emergency locally, then dispatch the nearest available responder."""
+    alert = EmergencyAlert(
+        farmer_name=payload.farmer_name,
+        latitude=payload.lat,
+        longitude=payload.lon,
+        landmark_description=payload.description,
+        urgency_level=payload.urgency,
     )
-    db.add(queue_item)
+    db.add(alert)
     db.commit()
-    db.refresh(queue_item)
+    db.refresh(alert)
 
-    return {"status": "saved_locally", "queue_id": queue_item.id}
+    responders = (
+        db.query(ResponderNode).filter(ResponderNode.is_available.is_(True)).all()
+    )
+    nearest, distance_km = find_nearest_responder(payload.lat, payload.lon, responders)
+
+    return {
+        "alert_id": alert.id,
+        "status": "QUEUED_AND_DISPATCHED",
+        "closest_responder": nearest.responder_name if nearest else "Broadcast to all neighbours",
+        "responder_type": nearest.responder_type if nearest else None,
+        "distance_km": round(distance_km, 2) if nearest else None,
+    }
+
+
+@app.get("/alerts")
+def list_alerts(db: Session = Depends(get_db)):
+    rows = db.query(EmergencyAlert).order_by(EmergencyAlert.id.desc()).all()
+    return [
+        {
+            "id": a.id,
+            "farmer_name": a.farmer_name,
+            "lat": a.latitude,
+            "lon": a.longitude,
+            "landmark": a.landmark_description,
+            "urgency": a.urgency_level,
+            "timestamp": a.timestamp,
+            "resolved": a.is_resolved,
+            "synced": a.is_synced_to_cloud,
+        }
+        for a in rows
+    ]
+
+
+@app.get("/responders")
+def list_responders(db: Session = Depends(get_db)):
+    rows = db.query(ResponderNode).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.responder_name,
+            "type": r.responder_type,
+            "lat": r.current_lat,
+            "lon": r.current_lon,
+            "available": r.is_available,
+        }
+        for r in rows
+    ]
+
+
+@app.post("/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: int, db: Session = Depends(get_db)):
+    alert = db.get(EmergencyAlert, alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    alert.is_resolved = True
+    db.commit()
+    return {"alert_id": alert_id, "status": "RESOLVED"}

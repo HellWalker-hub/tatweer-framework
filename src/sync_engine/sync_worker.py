@@ -1,13 +1,14 @@
 """
 sync_worker.py — the "sync-when-online" half of the offline-first loop.
 
-The edge API saves everything locally. This worker periodically checks whether
-the central cloud is reachable and, if it is, pushes any rows that haven't been
-synced yet and marks them as done.
+The edge node saves every alert locally. This worker periodically checks whether
+the central cloud is reachable and, when it is, pushes alerts that haven't been
+synced yet (is_synced_to_cloud == False) and marks them done. This guarantees
+zero data loss while the desert signal is down, and automatic catch-up when it
+returns.
 
-For now the actual cloud upload is a STUB (there is no central server yet), but
-the structure is real so the live call drops straight in later. You can run it
-standalone to watch it work:
+The cloud upload is a STUB for now (no central server exists yet), but the
+structure is real so the live call drops straight in later. Run standalone:
 
     python -m src.sync_engine.sync_worker
 """
@@ -17,9 +18,8 @@ import time
 
 import requests
 
-from src.edge_api.database import LocalQueue, SessionLocal
+from src.edge_api.database import EmergencyAlert, SessionLocal
 
-# Where the central UAE cloud would live. Overridable via .env / environment.
 CLOUD_BASE_URL = os.getenv("CLOUD_BASE_URL", "http://localhost:9000")
 CHECK_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL", "15"))
 
@@ -30,33 +30,35 @@ def is_cloud_reachable() -> bool:
         resp = requests.get(f"{CLOUD_BASE_URL}/health", timeout=3)
         return resp.status_code == 200
     except requests.RequestException:
-        # No connection / timeout / DNS failure -> treat as offline.
         return False
 
 
-def push_to_cloud(item: LocalQueue) -> bool:
+def push_to_cloud(alert: EmergencyAlert) -> bool:
     """
-    Send one queued item to the cloud. STUB for now — returns True to simulate a
-    successful upload. Replace the body with a real requests.post(...) once the
-    central API exists.
+    Send one alert to the cloud. STUB for now — returns True to simulate success.
+    Replace the body with a real requests.post(...) once the central API exists.
     """
-    # Example of the real call we'll enable later:
-    # resp = requests.post(f"{CLOUD_BASE_URL}/ingest",
-    #                      json={"type": item.payload_type, "data": item.data_payload},
+    # resp = requests.post(f"{CLOUD_BASE_URL}/ingest-alert",
+    #                      json={"id": alert.id, "lat": alert.latitude,
+    #                            "lon": alert.longitude, "urgency": alert.urgency_level},
     #                      timeout=10)
     # return resp.status_code == 200
     return True
 
 
-def flush_queue() -> int:
-    """Push every un-synced row. Returns how many were synced this pass."""
+def flush_alerts() -> int:
+    """Push every un-synced alert. Returns how many were synced this pass."""
     db = SessionLocal()
     synced = 0
     try:
-        pending = db.query(LocalQueue).filter(LocalQueue.is_synced.is_(False)).all()
-        for item in pending:
-            if push_to_cloud(item):
-                item.is_synced = True
+        pending = (
+            db.query(EmergencyAlert)
+            .filter(EmergencyAlert.is_synced_to_cloud.is_(False))
+            .all()
+        )
+        for alert in pending:
+            if push_to_cloud(alert):
+                alert.is_synced_to_cloud = True
                 synced += 1
         db.commit()
     finally:
@@ -65,14 +67,13 @@ def flush_queue() -> int:
 
 
 def run_forever() -> None:
-    """Loop: when the cloud is reachable, flush the local queue."""
     print(f"[sync] worker started — cloud target: {CLOUD_BASE_URL}")
     while True:
         if is_cloud_reachable():
-            count = flush_queue()
-            print(f"[sync] cloud online — synced {count} item(s)")
+            count = flush_alerts()
+            print(f"[sync] cloud online — synced {count} alert(s)")
         else:
-            print("[sync] cloud offline — holding data locally")
+            print("[sync] cloud offline — holding alerts locally")
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 

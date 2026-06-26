@@ -7,6 +7,10 @@ pydantic==2.10.4
 # Sync engine + dashboard
 requests==2.32.3
 streamlit==1.41.1
+pandas==2.2.3          # map + tables in the dashboard
 
-# NOTE: deliberately no ML / computer-vision libraries yet — domain is undecided
-# and we are keeping this base lightweight for the hackathon window.
+# Dev / testing (powers the falsifiable routing tests)
+pytest==8.3.4
+
+# NOTE: no ML / computer-vision libraries — routing uses the standard-library
+# Haversine formula, which works fully offline with no maps-API dependency.

@@ -1,49 +1,66 @@
 """
-database.py — local storage for the edge node.
+database.py — local storage for the Sahar-Connect edge node.
 
-This is the heart of the "offline-first" idea. The edge node runs at the rural
-site where the internet may be slow or absent. Every request is written to a
-LOCAL SQLite file first, so nothing is ever lost while offline. The sync engine
-later pushes those rows to the cloud when a connection is available.
+Offline-first: every emergency alert is written to a LOCAL SQLite file the
+instant it arrives, so nothing is lost when the desert cellular signal drops.
+The sync engine pushes alerts to the cloud later, when a connection exists.
 
-SQLite is perfect here: it's a single file, needs no separate database server,
-and is built into Python.
+Two tables:
+  - EmergencyAlert : a request for help (farmer pings location + landmark).
+  - ResponderNode  : a registered neighbour / formal responder who can help.
 """
 
 import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, create_engine
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    create_engine,
+)
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# The local database lives in a single file next to wherever we run the app.
 SQLALCHEMY_DATABASE_URL = "sqlite:///./local_edge.db"
 
-# NOTE: Gemini's draft called create_backend() — that function does not exist
-# in SQLAlchemy and would crash on startup. The correct factory is create_engine().
-# check_same_thread=False lets FastAPI's worker threads share the connection.
+# create_engine (NOT create_backend — that function doesn't exist in SQLAlchemy).
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False},
 )
-
-# A session is one "conversation" with the database. We make a factory here and
-# hand out short-lived sessions per request (see get_db() in main.py).
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Base class that our table models inherit from.
 Base = declarative_base()
 
 
-class LocalQueue(Base):
-    """One row = one captured payload waiting to be synced to the cloud."""
+class EmergencyAlert(Base):
+    """One call for help raised by a resident/farmer in the community."""
 
-    __tablename__ = "sync_queue"
+    __tablename__ = "emergency_alerts"
 
     id = Column(Integer, primary_key=True, index=True)
-    payload_type = Column(String)   # e.g. "logistics_update", "service_request"
-    data_payload = Column(String)   # the actual data, stored as a JSON string
+    farmer_name = Column(String, default="Anonymous Farmer")
+    latitude = Column(Float)
+    longitude = Column(Float)
+    landmark_description = Column(String, nullable=True)  # e.g. "3km N of Red Dune"
+    urgency_level = Column(String)                        # "HIGH" | "CRITICAL"
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    is_synced = Column(Boolean, default=False)   # flipped to True once pushed to cloud
+    is_resolved = Column(Boolean, default=False)
+    is_synced_to_cloud = Column(Boolean, default=False)
+
+
+class ResponderNode(Base):
+    """A neighbour or formal responder who can be dispatched to an alert."""
+
+    __tablename__ = "responder_nodes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    responder_name = Column(String)          # "Camel Farm 12", "Al Ain Patrol"
+    responder_type = Column(String, default="neighbour")  # "neighbour" | "formal"
+    current_lat = Column(Float)
+    current_lon = Column(Float)
+    is_available = Column(Boolean, default=True)
 
 
 def init_db() -> None:
