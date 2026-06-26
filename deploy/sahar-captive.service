@@ -1,0 +1,12 @@
+[Unit]
+Description=Sahar-Connect captive-portal responder (keeps phones on the offline hotspot)
+After=network.target
+
+[Service]
+# Runs as root so it can bind port 80.
+ExecStart=/usr/bin/python3 /home/pi/tatweer-framework/deploy/captive_server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
