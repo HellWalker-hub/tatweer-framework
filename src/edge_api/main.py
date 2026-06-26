@@ -87,6 +87,8 @@ def create_alert(payload: AlertIn, db: Session = Depends(get_db)):
         "closest_responder": nearest.responder_name if nearest else "Broadcast to all neighbours",
         "responder_type": nearest.responder_type if nearest else None,
         "distance_km": round(distance_km, 2) if nearest else None,
+        "responder_lat": nearest.current_lat if nearest else None,
+        "responder_lon": nearest.current_lon if nearest else None,
     }
 
 

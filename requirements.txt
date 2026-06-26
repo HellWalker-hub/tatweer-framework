@@ -7,7 +7,9 @@ pydantic==2.10.4
 # Sync engine + dashboard
 requests==2.32.3
 streamlit==1.41.1
-pandas==2.2.3          # map + tables in the dashboard
+pandas==2.2.3          # tables in the dashboard
+folium==0.18.0         # interactive map (colored markers + dispatch line)
+streamlit-folium==0.24.0   # bridges folium into Streamlit + tap-to-place clicks
 
 # Dev / testing (powers the falsifiable routing tests)
 pytest==8.3.4

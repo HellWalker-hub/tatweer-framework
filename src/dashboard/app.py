@@ -1,23 +1,31 @@
 """
 app.py — Sahar-Connect emergency dashboard (Streamlit).
 
-A lightweight kiosk/operator UI that talks to the edge API and proves the whole
-loop end-to-end:
-  1. shows the edge node is online,
-  2. plots responders + active alerts on a map of Al Qua'a,
-  3. lets a farmer raise an alert and instantly shows the nearest responder.
+Kiosk/operator UI that talks to the edge API and proves the whole loop:
+  health -> map of responders & emergencies -> raise an alert -> nearest
+  responder dispatched, with a simulated SMS notification.
+
+Phase-1 UX:
+  - location capture: tap the map (offline-robust) or "Simulate GPS ping"
+  - map clarity: green responders, red emergencies, blue dispatch route
+  - feedback loop: simulated SMS payload + responder view
 
 Run it (with the edge API also running):
     streamlit run src/dashboard/app.py
 """
 
 import os
+import random
 
+import folium
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_folium import st_folium
 
 EDGE_API_URL = os.getenv("EDGE_API_URL", "http://localhost:8000")
+AL_QUAA = (23.55, 55.50)        # community centre (lat, lon)
+ASSUMED_SPEED_KMH = 40          # desert response vehicle, used for ETA estimates
 
 st.set_page_config(page_title="Sahar-Connect", page_icon="🛰️", layout="wide")
 
@@ -27,23 +35,25 @@ st.set_page_config(page_title="Sahar-Connect", page_icon="🛰️", layout="wide
 st.markdown(
     """
     <style>
-        /* Larger base typography for readability */
         html { font-size: 18px; }
         h1 { font-size: 2.4rem !important; }
         label, .stMarkdown p { font-size: 1.15rem !important; }
 
         /* Massive, high-contrast emergency button */
-        .stButton > button {
+        .stButton > button, .stFormSubmitButton > button {
             width: 100%;
-            min-height: 80px;
-            background-color: #FF4B4B !important;
-            color: #ffffff !important;
-            font-size: 1.5rem !important;
+            min-height: 64px;
+            font-size: 1.3rem !important;
             font-weight: 800 !important;
             border-radius: 14px;
+        }
+        .stFormSubmitButton > button {
+            background-color: #FF4B4B !important;
+            color: #ffffff !important;
+            min-height: 80px;
             border: 3px solid #ffffff;
         }
-        .stButton > button:hover { background-color: #e03e3e !important; }
+        .stFormSubmitButton > button:hover { background-color: #e03e3e !important; }
 
         /* Large, clearly-bordered input fields (easy touch targets) */
         .stTextInput input, .stNumberInput input,
@@ -62,6 +72,13 @@ st.markdown(
         }
         .status-online  { background-color: #064E3B; color: #6EE7B7; border: 2px solid #10B981; }
         .status-offline { background-color: #7F1D1D; color: #FCA5A5; border: 2px solid #EF4444; }
+
+        /* Simulated SMS dispatch payload */
+        .sms-payload {
+            background-color: #0F172A; color: #93C5FD; border: 2px dashed #3B82F6;
+            border-radius: 10px; padding: 14px; margin-top: 12px;
+            font-family: ui-monospace, Menlo, monospace; font-size: 1.0rem; line-height: 1.6;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -70,7 +87,13 @@ st.markdown(
 st.title("🛰️ Sahar-Connect — Desert Emergency Dispatch")
 st.caption("Offline-first neighbour-to-neighbour alerting for Al Qua'a")
 
-# --- 1. Health -------------------------------------------------------------
+# --- session state ---------------------------------------------------------
+st.session_state.setdefault("lat_input", AL_QUAA[0])
+st.session_state.setdefault("lon_input", AL_QUAA[1])
+st.session_state.setdefault("last_dispatch", None)      # for the map route line
+st.session_state.setdefault("last_notification", None)  # for the SMS panel
+
+# --- health (styled, honest online/offline state) --------------------------
 try:
     health = requests.get(f"{EDGE_API_URL}/health", timeout=3).json()
     location = str(health.get("location", "unknown")).upper()
@@ -100,58 +123,153 @@ alerts = fetch("/alerts")
 
 col_map, col_form = st.columns([2, 1])
 
-# --- 2. Map ----------------------------------------------------------------
+# --- map: green responders, red emergencies, blue dispatch route -----------
 with col_map:
     st.subheader("Community map")
-    points = []
+
+    fmap = folium.Map(location=AL_QUAA, zoom_start=11, control_scale=True)
+
     for r in responders:
-        points.append({"lat": r["lat"], "lon": r["lon"]})
+        available = r["available"]
+        colour = "#10B981" if available else "#9CA3AF"
+        folium.CircleMarker(
+            location=[r["lat"], r["lon"]],
+            radius=6,
+            color=colour,
+            fill=True,
+            fill_color=colour,
+            fill_opacity=0.85,
+            tooltip=f"{r['name']} — {'available' if available else 'busy'} ({r['type']})",
+        ).add_to(fmap)
+
     for a in alerts:
         if not a["resolved"]:
-            points.append({"lat": a["lat"], "lon": a["lon"]})
-    if points:
-        st.map(pd.DataFrame(points), zoom=9)
-    else:
-        st.info("No data yet — run `python -m src.ai_modules.generate_mock_data`.")
+            folium.Marker(
+                location=[a["lat"], a["lon"]],
+                icon=folium.Icon(color="red", icon="exclamation-sign"),
+                tooltip=f"🚨 {a['farmer_name']} — {a['urgency']}: {a['landmark'] or ''}",
+            ).add_to(fmap)
+
+    dispatch = st.session_state.last_dispatch
+    if dispatch and dispatch.get("responder_lat") is not None:
+        folium.PolyLine(
+            [
+                [dispatch["alert_lat"], dispatch["alert_lon"]],
+                [dispatch["responder_lat"], dispatch["responder_lon"]],
+            ],
+            color="#3B82F6",
+            weight=4,
+            opacity=0.9,
+            dash_array="8",
+            tooltip=f"Dispatch route → {dispatch['name']} ({dispatch['distance']} km)",
+        ).add_to(fmap)
+
+    map_state = st_folium(fmap, height=440, returned_objects=["last_clicked"])
+
+    # Tap-to-place: a click sets the emergency location (works fully offline).
+    if map_state and map_state.get("last_clicked"):
+        st.session_state.lat_input = round(map_state["last_clicked"]["lat"], 5)
+        st.session_state.lon_input = round(map_state["last_clicked"]["lng"], 5)
+
+    st.caption(
+        "🟢 responder available · ⚪ busy · 🔴 emergency · 🔵 dispatch route — "
+        "**tap the map** to set the emergency location."
+    )
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Responders", len(responders))
     c2.metric("Available", sum(1 for r in responders if r["available"]))
     c3.metric("Open alerts", sum(1 for a in alerts if not a["resolved"]))
 
-# --- 3. Raise an alert -----------------------------------------------------
+# --- raise an alert --------------------------------------------------------
 with col_form:
     st.subheader("🚨 Raise an emergency")
-    with st.form("alert_form", clear_on_submit=True):
-        farmer_name = st.text_input("Your name", "Anonymous Farmer")
-        lat = st.number_input("Latitude", value=23.55, format="%.5f")
-        lon = st.number_input("Longitude", value=55.50, format="%.5f")
-        description = st.text_input("Landmark / description",
-                                    "e.g. 3km N of the red dune")
-        urgency = st.selectbox("Urgency", ["HIGH", "CRITICAL"])
-        submitted = st.form_submit_button("Send alert")
 
-        if submitted:
-            payload = {
-                "farmer_name": farmer_name,
-                "lat": lat,
-                "lon": lon,
-                "description": description,
-                "urgency": urgency,
-            }
+    # Simulate a hardware GPS ping (drops within ~5 km of Al Qua'a). On a real
+    # phone this is replaced by the device GPS; tap-to-place is the offline path.
+    if st.button("🎲 Simulate GPS ping (demo)"):
+        st.session_state.lat_input = round(AL_QUAA[0] + random.uniform(-0.045, 0.045), 5)
+        st.session_state.lon_input = round(AL_QUAA[1] + random.uniform(-0.045, 0.045), 5)
+        st.rerun()
+
+    st.caption(
+        f"📍 Location: **{st.session_state.lat_input:.5f}, "
+        f"{st.session_state.lon_input:.5f}**"
+    )
+
+    with st.form("alert_form", clear_on_submit=False):
+        farmer_name = st.text_input("Your name", "Anonymous Farmer")
+        lat = st.number_input("Latitude", format="%.5f", key="lat_input")
+        lon = st.number_input("Longitude", format="%.5f", key="lon_input")
+        description = st.text_input("Landmark / description", "e.g. 3km N of the red dune")
+        urgency = st.selectbox("Urgency", ["HIGH", "CRITICAL"])
+        submitted = st.form_submit_button("🚨 Send alert")
+
+    if submitted:
+        payload = {
+            "farmer_name": farmer_name,
+            "lat": lat,
+            "lon": lon,
+            "description": description,
+            "urgency": urgency,
+        }
+        try:
             resp = requests.post(
                 f"{EDGE_API_URL}/alerts/create", json=payload, timeout=5
             ).json()
-            st.success(f"Alert #{resp['alert_id']} — {resp['status']}")
-            if resp.get("distance_km") is not None:
-                st.info(
-                    f"Nearest responder: **{resp['closest_responder']}** "
-                    f"({resp['responder_type']}) — {resp['distance_km']} km away"
-                )
-            else:
-                st.warning(resp["closest_responder"])
+        except requests.RequestException as exc:
+            st.error(f"Could not reach edge API: {exc}")
+            resp = None
 
-# --- 4. Alert log ----------------------------------------------------------
+        if resp:
+            dist = resp.get("distance_km")
+            eta = round(dist / ASSUMED_SPEED_KMH * 60) if dist else None
+            st.session_state.last_dispatch = {
+                "alert_lat": lat,
+                "alert_lon": lon,
+                "responder_lat": resp.get("responder_lat"),
+                "responder_lon": resp.get("responder_lon"),
+                "name": resp.get("closest_responder"),
+                "distance": dist,
+            }
+            st.session_state.last_notification = {
+                "alert_id": resp.get("alert_id"),
+                "name": resp.get("closest_responder"),
+                "rtype": resp.get("responder_type"),
+                "dist": dist,
+                "eta": eta,
+                "phone": f"+971-50-{random.randint(100, 999)}-{random.randint(1000, 9999)}",
+                "lat": lat,
+                "lon": lon,
+                "urgency": urgency,
+            }
+            st.rerun()
+
+    # Feedback loop: persistent "last dispatch" panel with a simulated SMS.
+    note = st.session_state.last_notification
+    if note:
+        if note["dist"] is not None:
+            st.success(
+                f"✅ Alert #{note['alert_id']} dispatched → **{note['name']}** "
+                f"({note['rtype']}) · {note['dist']} km · ETA ~{note['eta']} min"
+            )
+            st.markdown(
+                '<div class="sms-payload">📨 SMS PAYLOAD GENERATED<br>'
+                f'To: {note["phone"]}<br>'
+                f'{note["urgency"]} alert at {note["lat"]:.5f}, {note["lon"]:.5f}<br>'
+                f'Nearest unit: {note["name"]} · ETA ~{note["eta"]} min</div>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("📟 Responder view — what the dispatched unit receives"):
+                st.markdown(f"### 🚨 {note['urgency']} ALERT")
+                st.write(f"**Assigned to:** {note['name']} ({note['rtype']})")
+                st.write(f"**Location:** {note['lat']:.5f}, {note['lon']:.5f}")
+                st.write(f"**Distance:** {note['dist']} km · **ETA:** ~{note['eta']} min")
+                st.map(pd.DataFrame([{"lat": note["lat"], "lon": note["lon"]}]), zoom=11)
+        else:
+            st.warning(f"Alert #{note['alert_id']} logged — broadcast to all neighbours.")
+
+# --- alert log -------------------------------------------------------------
 st.subheader("Alert log")
 if alerts:
     st.dataframe(pd.DataFrame(alerts), use_container_width=True)
