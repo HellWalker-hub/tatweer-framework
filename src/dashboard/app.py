@@ -238,7 +238,7 @@ with col_form:
                 "rtype": resp.get("responder_type"),
                 "dist": dist,
                 "eta": eta,
-                "phone": f"+971-50-{random.randint(100, 999)}-{random.randint(1000, 9999)}",
+                "phone": "+971 50 945 5277",
                 "lat": lat,
                 "lon": lon,
                 "urgency": urgency,
@@ -259,6 +259,10 @@ with col_form:
                 f'{note["urgency"]} alert at {note["lat"]:.5f}, {note["lon"]:.5f}<br>'
                 f'Nearest unit: {note["name"]} · ETA ~{note["eta"]} min</div>',
                 unsafe_allow_html=True,
+            )
+            st.caption(
+                "Simulated payload — this is the exact message handed to an SMS gateway "
+                "(e.g. Twilio) the moment the node regains connectivity."
             )
             with st.expander("📟 Responder view — what the dispatched unit receives"):
                 st.markdown(f"### 🚨 {note['urgency']} ALERT")
