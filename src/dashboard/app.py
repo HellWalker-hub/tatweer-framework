@@ -20,16 +20,71 @@ import streamlit as st
 EDGE_API_URL = os.getenv("EDGE_API_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="Sahar-Connect", page_icon="🛰️", layout="wide")
+
+# --- Kiosk accessibility styling -------------------------------------------
+# High contrast, large fonts, and big touch targets so the dashboard is usable
+# by rural residents on a sun-glared kiosk screen or a phone in the field.
+st.markdown(
+    """
+    <style>
+        /* Larger base typography for readability */
+        html { font-size: 18px; }
+        h1 { font-size: 2.4rem !important; }
+        label, .stMarkdown p { font-size: 1.15rem !important; }
+
+        /* Massive, high-contrast emergency button */
+        .stButton > button {
+            width: 100%;
+            min-height: 80px;
+            background-color: #FF4B4B !important;
+            color: #ffffff !important;
+            font-size: 1.5rem !important;
+            font-weight: 800 !important;
+            border-radius: 14px;
+            border: 3px solid #ffffff;
+        }
+        .stButton > button:hover { background-color: #e03e3e !important; }
+
+        /* Large, clearly-bordered input fields (easy touch targets) */
+        .stTextInput input, .stNumberInput input,
+        .stSelectbox div[data-baseweb="select"], .stTextArea textarea {
+            font-size: 1.2rem !important;
+            padding: 12px !important;
+            border: 2px solid #4CAF50 !important;
+            border-radius: 10px !important;
+        }
+
+        /* Unmistakable online/offline state banner */
+        .status-banner {
+            padding: 18px; border-radius: 10px; font-weight: 800;
+            text-align: center; margin-bottom: 18px; font-size: 1.3rem;
+            letter-spacing: 0.5px;
+        }
+        .status-online  { background-color: #064E3B; color: #6EE7B7; border: 2px solid #10B981; }
+        .status-offline { background-color: #7F1D1D; color: #FCA5A5; border: 2px solid #EF4444; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("🛰️ Sahar-Connect — Desert Emergency Dispatch")
 st.caption("Offline-first neighbour-to-neighbour alerting for Al Qua'a")
 
 # --- 1. Health -------------------------------------------------------------
 try:
     health = requests.get(f"{EDGE_API_URL}/health", timeout=3).json()
-    st.success(f"Edge node ONLINE · location: {health.get('location', 'unknown')}")
+    location = str(health.get("location", "unknown")).upper()
+    st.markdown(
+        f'<div class="status-banner status-online">🟢 EDGE NODE ACTIVE &amp; ROUTING'
+        f' • LOCATION: {location}</div>',
+        unsafe_allow_html=True,
+    )
 except requests.RequestException:
-    st.error(f"Edge API not reachable at {EDGE_API_URL}. Start it with: "
-             "`uvicorn src.edge_api.main:app --reload`")
+    st.markdown(
+        '<div class="status-banner status-offline">🔴 EDGE NODE OFFLINE'
+        ' • START IT WITH: uvicorn src.edge_api.main:app --reload</div>',
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 
