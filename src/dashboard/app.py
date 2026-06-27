@@ -257,7 +257,7 @@ def interactive_map_and_form(responders, alerts):
                 st.error(f"Could not reach edge API: {exc}")
                 resp = None
 
-            if resp:
+            if resp and "alert_id" in resp:
                 dist = resp.get("distance_km")
                 eta = round(dist / ASSUMED_SPEED_KMH * 60) if dist else None
                 st.session_state.last_dispatch = {
