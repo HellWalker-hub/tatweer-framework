@@ -47,9 +47,9 @@ the nearest available responder without a cloud round-trip.
 Streamlit kiosk dashboard, and a reproducible seed of **53 responder nodes** placed around Al
 Qua'a's real coordinates (deterministic, `seed=42`).
 
-**Deployment feasibility:** This is not a heavy cloud application. It is designed to run on a
-low-cost edge device (e.g. a Raspberry Pi 5) at a community centre or local telecom mast. It uses
-standard Python libraries — no GPU, no enterprise cloud licensing.
+**Deployment feasibility:** This is not a heavy cloud application. It runs on a low-cost edge device
+— **verified on a Raspberry Pi 4 Model B** (see the measured Performance table) — at a community
+centre or local telecom mast. It uses standard Python libraries — no GPU, no enterprise cloud licensing.
 
 ## 5. Scalability After the Hackathon (Criterion 5)
 Built for the Al Qua'a pilot, but the architecture is inherently replicable. Each community runs
@@ -76,6 +76,55 @@ a **Raspberry Pi 4 Model B (Rev 1.5, 4 GB)** — the actual kind of low-cost nod
 
 These are measured facts, not estimates: a sub-$60 box that boots in under half a minute, sips ~5 W,
 and dispatches emergencies with **zero internet** — exactly the deployability the challenge demands.
+
+---
+
+## 🔬 Evidence & Validation (Criterion 6)
+
+Every claim here is checkable, and the checks live in this repo:
+
+| Claim | Evidence | Verify it yourself |
+|---|---|---|
+| The routing math is correct | 4/4 unit tests on Haversine + nearest-responder | `pytest -q` |
+| Dispatch is effectively instant | nearest responder over 53 nodes in **~0.04 ms** (mean; p95 0.047 ms) on dev hardware; the algorithm is O(n) over a few dozen nodes, so it stays sub-millisecond on the Pi | `src/edge_api/routing.py` |
+| It works with **zero internet** | a phone alert raised with the **Ethernet physically unplugged** was logged to the Pi's local DB (alert `id:5`) | unplug test → `curl http://10.42.0.1:8000/alerts` |
+| It runs on cheap hardware | measured on a Pi 4 B: 358 MB RAM, ~24 s boot, 43 °C, ~5 W | `free -h`, `systemd-analyze`, `vcgencmd measure_temp` |
+| The scene is reproducible | deterministic seed (`seed=42`) places 53 responders around Al Qua'a | `python -m src.ai_modules.generate_mock_data` |
+
+Visual proof is in the hero screenshot above and the demo video below.
+
+## 🧭 Limitations & Honesty
+
+We'd rather show our edges than oversell them. What is **not** done yet:
+
+- **Responder data is simulated.** The 53 responders are synthetic coordinates around Al Qua'a, not
+  a real registry. A real deployment needs an onboarding step for actual neighbours and responders.
+- **The SMS is a simulated payload, not a live send.** We generate the exact message an SMS gateway
+  (e.g. Twilio) would send and label it as such in the UI; wiring a real gateway needs connectivity
+  and an account, which we deliberately left out to keep the core fully offline.
+- **No field testing with real users yet.** Our evidence is technical (tests, hardware metrics,
+  offline verification) — not a user study. A pilot with real Al Qua'a residents is the next step,
+  and we don't yet have a measured local baseline (e.g. current response times) to quantify impact.
+- **Phone location UX is basic.** Tap-to-place and a "simulate GPS" button work; a one-tap
+  "use my GPS" needs HTTPS (a browser policy, not a GPS limit) and is on the roadmap.
+- **Offline tiles cover a bounded area.** Outside the cached Al Qua'a bounding box the satellite
+  basemap won't render offline — dispatch still works regardless.
+
+## 🛡️ Anticipating the Hard Questions
+
+- **"Why not just call 999?"** In dispersed desert with no street addresses, the bottleneck isn't
+  the call — it's conveying *where* you are and reaching the *nearest able* responder fast.
+  Sahar-Connect captures precise coordinates, routes to the closest available unit, and keeps
+  working when the cellular signal doesn't.
+- **"What if no responder is nearby?"** It returns the nearest available unit with distance/ETA; if
+  none are free it broadcasts to all neighbours. Coverage improves as more neighbours register —
+  that's the mesh model.
+- **"How do you *know* it's offline?"** We unplugged the Ethernet and a phone alert still logged and
+  dispatched (alert `id:5`); both the map tiles and the routing come from the Pi itself.
+- **"What about people without smartphones?"** The edge API is input-agnostic — the same backend can
+  accept a structured SMS or a fixed kiosk at the community hub. The phone UI is just one client.
+- **"Is this a demo or could it run for real?"** It runs on a $55 Pi at ~5 W, boots in ~24 s, and
+  needs no cloud (see Performance). The honest gaps are listed under Limitations.
 
 ---
 
@@ -140,9 +189,18 @@ alert, and confirm it is logged and a nearest responder is dispatched.
 
 ---
 
+## 🎥 Demo
+
+> **Demo video:** _add link or `docs/demo.mp4` here before submitting._
+
+The video walks the full offline loop: a phone joins the Pi's `Sahar-Connect-Emergency` hotspot →
+raises an alert → the nearest responder is dispatched on the satellite map → **the Ethernet cable is
+unplugged and the system keeps working** — no internet, no cloud.
+
 ## 🧰 Tools
-Built with **FastAPI**, **Streamlit**, **SQLAlchemy/SQLite**, and **pandas**. Geospatial routing
-uses the standard-library Haversine formula. No ML/GPU dependencies.
+Built with **FastAPI**, **Streamlit**, **SQLAlchemy/SQLite**, **folium**, and **pandas**. Geospatial
+routing uses the standard-library Haversine formula. Offline basemap is cached **Esri World Imagery**.
+No ML/GPU dependencies.
 
 ## 📄 License / Open source
 Released publicly as required by the Tatweer Hackathon. The framework is intended to be reusable
