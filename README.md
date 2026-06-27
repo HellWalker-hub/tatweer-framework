@@ -189,6 +189,34 @@ alert, and confirm it is logged and a nearest responder is dispatched.
 
 ---
 
+## 🚀 Raspberry Pi Deployment (Offline-First Kiosk)
+
+To deploy Sahar-Connect on a Raspberry Pi and ensure it works completely off-grid as a standalone Wi-Fi hotspot:
+
+**1. Create a persistent Wi-Fi Hotspot**
+Connect to the Pi (via Ethernet or a monitor) and configure NetworkManager to broadcast an open hotspot:
+```bash
+sudo nmcli connection add type wifi ifname wlan0 con-name sahar-hotspot autoconnect no ssid Sahar-Connect-Emergency
+sudo nmcli connection modify sahar-hotspot 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared
+sudo nmcli connection up sahar-hotspot
+```
+This forces the Pi to host a local network (defaulting to `10.42.0.1`).
+
+**2. Automate the Hotspot on Boot**
+If the Pi is rebooted in the desert without Ethernet, it won't broadcast the hotspot automatically unless told to. We created a systemd service (`deploy/sahar-hotspot-boot.service`) to force the hotspot up on boot:
+```bash
+sudo cp deploy/sahar-hotspot-boot.service /etc/systemd/system/
+sudo systemctl enable sahar-hotspot-boot
+```
+
+**3. Deploy Code (Mac/PC -> Pi)**
+You can deploy code to the Pi instantly without Git by piping a tarball over SSH and restarting the services:
+```bash
+tar --exclude='.venv' --exclude='__pycache__' --exclude='*.db' --exclude='.git' -czf - . | ssh pi@192.168.1.55 "tar -xzf - -C ~/tatweer-framework && sudo systemctl restart sahar-api sahar-dashboard"
+```
+
+---
+
 ## 🎥 Demo
 
 > **Demo video:** _add link or `docs/demo.mp4` here before submitting._
