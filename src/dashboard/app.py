@@ -255,7 +255,7 @@ with col_form:
                 "rtype": resp.get("responder_type"),
                 "dist": dist,
                 "eta": eta,
-                "phone": "+971 50 945 5277",
+                "phone": "+971 50 123 4567",  # demo placeholder (simulated payload)
                 "lat": lat,
                 "lon": lon,
                 "urgency": urgency,
