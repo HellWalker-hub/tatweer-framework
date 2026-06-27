@@ -24,7 +24,7 @@ import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
-EDGE_API_URL = os.getenv("EDGE_API_URL", "http://localhost:8000")
+EDGE_API_URL = os.getenv("EDGE_API_URL", "http://127.0.0.1:8000")
 # Where the map gets its tiles. Default = online OpenStreetMap (works for anyone
 # who clones the repo). On the Pi we override this to the edge node's own /tiles
 # route so the map works with ZERO internet, e.g.:
