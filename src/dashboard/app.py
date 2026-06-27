@@ -293,7 +293,7 @@ def interactive_map_and_form(responders, alerts):
                     '<div class="sms-payload">📨 SMS PAYLOAD GENERATED<br>'
                     f'To: {note["phone"]}<br>'
                     f'{note["urgency"]} alert at {note["lat"]:.5f}, {note["lon"]:.5f}<br>'
-                    f'Nearest unit: {note["name"]} · ETA ~{note["eta']} min</div>',
+                    f'Nearest unit: {note["name"]} · ETA ~{note["eta"]} min</div>',
                     unsafe_allow_html=True,
                 )
                 st.caption(
