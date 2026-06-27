@@ -219,8 +219,10 @@ tar --exclude='.venv' --exclude='__pycache__' --exclude='*.db' --exclude='.git' 
 
 ## 🎥 Demo
 
-> **Demo video:** _add link or `docs/demo.mp4` here before submitting._
+## 🎥 Watch the Live Edge-Hardware Demo
+**[Click here to watch the 90-second offline hardware demonstration](https://youtu.be/-6pGISJEB1Y)**
 
+*Watch us physically unplug the Raspberry Pi from the internet and successfully dispatch an alert entirely offline.*
 The video walks the full offline loop: a phone joins the Pi's `Sahar-Connect-Emergency` hotspot →
 raises an alert → the nearest responder is dispatched on the satellite map → **the Ethernet cable is
 unplugged and the system keeps working** — no internet, no cloud.
