@@ -171,14 +171,26 @@ def interactive_map_and_form(responders, alerts):
         base_children_keys = list(fmap._children.keys())
 
         try:
+            # Draw active alerts
             for a in alerts:
-                if not a["resolved"]:
+                if not a.get("resolved", False):
+                    color = "red" if a["urgency"] == "CRITICAL" else "orange"
                     folium.Marker(
-                        location=[a["lat"], a["lon"]],
-                        icon=folium.Icon(color="red", icon="exclamation-sign"),
-                        tooltip=f"🚨 {a['farmer_name']} — {a['urgency']}: {a['landmark'] or ''}",
+                        [a["lat"], a["lon"]],
+                        icon=folium.Icon(color=color, icon="warning-sign"),
+                        tooltip=f"Alert: {a['farmer_name']}",
                     ).add_to(fmap)
 
+            # Draw the currently selected location (from a map click or manual entry)
+            # 0.0 is our default initialized value, which is in the ocean.
+            if st.session_state.lat_input != 0.0 and st.session_state.lon_input != 0.0:
+                folium.Marker(
+                    [st.session_state.lat_input, st.session_state.lon_input],
+                    icon=folium.Icon(color="gray", icon="info-sign"),
+                    tooltip="Selected Location",
+                ).add_to(fmap)
+
+            # Draw the active dispatch line (if one was just created).
             dispatch = st.session_state.last_dispatch
             if dispatch and dispatch.get("responder_lat") is not None:
                 folium.PolyLine(
