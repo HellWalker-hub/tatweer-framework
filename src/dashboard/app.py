@@ -14,6 +14,7 @@ Run it (with the edge API also running):
     streamlit run src/dashboard/app.py
 """
 
+import json
 import os
 import random
 
@@ -123,22 +124,16 @@ def fetch(path):
         return []
 
 
-responders = fetch("/responders")
-alerts = fetch("/alerts")
-
-col_map, col_form = st.columns([2, 1])
-
-# --- map: green responders, red emergencies, blue dispatch route -----------
-with col_map:
-    st.subheader("Community map")
-
-    if TILE_SERVER_URL:
+@st.cache_resource
+def get_base_map(tile_server_url, responders_json):
+    responders_data = json.loads(responders_json)
+    if tile_server_url:
         # Offline: serve tiles from the edge node's local cache.
         fmap = folium.Map(
             location=AL_QUAA,
             zoom_start=11,
             control_scale=True,
-            tiles=TILE_SERVER_URL,
+            tiles=tile_server_url,
             attr="Tiles © Esri — World Imagery (cached offline by Sahar-Connect)",
             max_zoom=15,
         )
@@ -146,7 +141,7 @@ with col_map:
         # Default: online OpenStreetMap (for anyone running the repo locally).
         fmap = folium.Map(location=AL_QUAA, zoom_start=11, control_scale=True)
 
-    for r in responders:
+    for r in responders_data:
         available = r["available"]
         colour = "#10B981" if available else "#9CA3AF"
         folium.CircleMarker(
@@ -158,137 +153,167 @@ with col_map:
             fill_opacity=0.85,
             tooltip=f"{r['name']} — {'available' if available else 'busy'} ({r['type']})",
         ).add_to(fmap)
+    return fmap
 
-    for a in alerts:
-        if not a["resolved"]:
-            folium.Marker(
-                location=[a["lat"], a["lon"]],
-                icon=folium.Icon(color="red", icon="exclamation-sign"),
-                tooltip=f"🚨 {a['farmer_name']} — {a['urgency']}: {a['landmark'] or ''}",
-            ).add_to(fmap)
 
-    dispatch = st.session_state.last_dispatch
-    if dispatch and dispatch.get("responder_lat") is not None:
-        folium.PolyLine(
-            [
-                [dispatch["alert_lat"], dispatch["alert_lon"]],
-                [dispatch["responder_lat"], dispatch["responder_lon"]],
-            ],
-            color="#3B82F6",
-            weight=4,
-            opacity=0.9,
-            dash_array="8",
-            tooltip=f"Dispatch route → {dispatch['name']} ({dispatch['distance']} km)",
-        ).add_to(fmap)
+@st.fragment
+def interactive_map_and_form(responders, alerts):
+    col_map, col_form = st.columns([2, 1])
 
-    map_state = st_folium(fmap, height=440, returned_objects=["last_clicked"])
+    # --- map: green responders, red emergencies, blue dispatch route -----------
+    with col_map:
+        st.subheader("Community map")
 
-    # Tap-to-place: a click sets the emergency location (works fully offline).
-    if map_state and map_state.get("last_clicked"):
-        st.session_state.lat_input = round(map_state["last_clicked"]["lat"], 5)
-        st.session_state.lon_input = round(map_state["last_clicked"]["lng"], 5)
+        responders_json = json.dumps(responders)
+        fmap = get_base_map(TILE_SERVER_URL, responders_json)
 
-    st.caption(
-        "🟢 responder available · ⚪ busy · 🔴 emergency · 🔵 dispatch route — "
-        "**tap the map** to set the emergency location."
-    )
+        # To prevent mutating the cached map object, keep track of the base children keys
+        base_children_keys = list(fmap._children.keys())
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Responders", len(responders))
-    c2.metric("Available", sum(1 for r in responders if r["available"]))
-    c3.metric("Open alerts", sum(1 for a in alerts if not a["resolved"]))
-
-# --- raise an alert --------------------------------------------------------
-with col_form:
-    st.subheader("🚨 Raise an emergency")
-
-    # Simulate a hardware GPS ping (drops within ~5 km of Al Qua'a). On a real
-    # phone this is replaced by the device GPS; tap-to-place is the offline path.
-    if st.button("🎲 Simulate GPS ping (demo)"):
-        st.session_state.lat_input = round(AL_QUAA[0] + random.uniform(-0.045, 0.045), 5)
-        st.session_state.lon_input = round(AL_QUAA[1] + random.uniform(-0.045, 0.045), 5)
-        st.rerun()
-
-    st.caption(
-        f"📍 Location: **{st.session_state.lat_input:.5f}, "
-        f"{st.session_state.lon_input:.5f}**"
-    )
-
-    with st.form("alert_form", clear_on_submit=False):
-        farmer_name = st.text_input("Your name", "Anonymous Farmer")
-        lat = st.number_input("Latitude", format="%.5f", key="lat_input")
-        lon = st.number_input("Longitude", format="%.5f", key="lon_input")
-        description = st.text_input("Landmark / description", "e.g. 3km N of the red dune")
-        urgency = st.selectbox("Urgency", ["HIGH", "CRITICAL"])
-        submitted = st.form_submit_button("🚨 Send alert")
-
-    if submitted:
-        payload = {
-            "farmer_name": farmer_name,
-            "lat": lat,
-            "lon": lon,
-            "description": description,
-            "urgency": urgency,
-        }
         try:
-            resp = requests.post(
-                f"{EDGE_API_URL}/alerts/create", json=payload, timeout=5
-            ).json()
-        except requests.RequestException as exc:
-            st.error(f"Could not reach edge API: {exc}")
-            resp = None
+            for a in alerts:
+                if not a["resolved"]:
+                    folium.Marker(
+                        location=[a["lat"], a["lon"]],
+                        icon=folium.Icon(color="red", icon="exclamation-sign"),
+                        tooltip=f"🚨 {a['farmer_name']} — {a['urgency']}: {a['landmark'] or ''}",
+                    ).add_to(fmap)
 
-        if resp:
-            dist = resp.get("distance_km")
-            eta = round(dist / ASSUMED_SPEED_KMH * 60) if dist else None
-            st.session_state.last_dispatch = {
-                "alert_lat": lat,
-                "alert_lon": lon,
-                "responder_lat": resp.get("responder_lat"),
-                "responder_lon": resp.get("responder_lon"),
-                "name": resp.get("closest_responder"),
-                "distance": dist,
-            }
-            st.session_state.last_notification = {
-                "alert_id": resp.get("alert_id"),
-                "name": resp.get("closest_responder"),
-                "rtype": resp.get("responder_type"),
-                "dist": dist,
-                "eta": eta,
-                "phone": "+971 50 123 4567",  # demo placeholder (simulated payload)
-                "lat": lat,
-                "lon": lon,
-                "urgency": urgency,
-            }
+            dispatch = st.session_state.last_dispatch
+            if dispatch and dispatch.get("responder_lat") is not None:
+                folium.PolyLine(
+                    [
+                        [dispatch["alert_lat"], dispatch["alert_lon"]],
+                        [dispatch["responder_lat"], dispatch["responder_lon"]],
+                    ],
+                    color="#3B82F6",
+                    weight=4,
+                    opacity=0.9,
+                    dash_array="8",
+                    tooltip=f"Dispatch route → {dispatch['name']} ({dispatch['distance']} km)",
+                ).add_to(fmap)
+
+            map_state = st_folium(fmap, height=440, returned_objects=["last_clicked"])
+        finally:
+            # Clean up the map object by restoring it to the base children
+            fmap._children = {k: fmap._children[k] for k in base_children_keys}
+
+        # Tap-to-place: a click sets the emergency location (works fully offline).
+        if map_state and map_state.get("last_clicked"):
+            click_lat = round(map_state["last_clicked"]["lat"], 5)
+            click_lon = round(map_state["last_clicked"]["lng"], 5)
+            if click_lat != st.session_state.lat_input or click_lon != st.session_state.lon_input:
+                st.session_state.lat_input = click_lat
+                st.session_state.lon_input = click_lon
+                st.rerun()
+
+        st.caption(
+            "🟢 responder available · ⚪ busy · 🔴 emergency · 🔵 dispatch route — "
+            "**tap the map** to set the emergency location."
+        )
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Responders", len(responders))
+        c2.metric("Available", sum(1 for r in responders if r["available"]))
+        c3.metric("Open alerts", sum(1 for a in alerts if not a["resolved"]))
+
+    # --- raise an alert --------------------------------------------------------
+    with col_form:
+        st.subheader("🚨 Raise an emergency")
+
+        # Simulate a hardware GPS ping (drops within ~5 km of Al Qua'a). On a real
+        # phone this is replaced by the device GPS; tap-to-place is the offline path.
+        if st.button("🎲 Simulate GPS ping (demo)"):
+            st.session_state.lat_input = round(AL_QUAA[0] + random.uniform(-0.045, 0.045), 5)
+            st.session_state.lon_input = round(AL_QUAA[1] + random.uniform(-0.045, 0.045), 5)
             st.rerun()
 
-    # Feedback loop: persistent "last dispatch" panel with a simulated SMS.
-    note = st.session_state.last_notification
-    if note:
-        if note["dist"] is not None:
-            st.success(
-                f"✅ Alert #{note['alert_id']} dispatched → **{note['name']}** "
-                f"({note['rtype']}) · {note['dist']} km · ETA ~{note['eta']} min"
-            )
-            st.markdown(
-                '<div class="sms-payload">📨 SMS PAYLOAD GENERATED<br>'
-                f'To: {note["phone"]}<br>'
-                f'{note["urgency"]} alert at {note["lat"]:.5f}, {note["lon"]:.5f}<br>'
-                f'Nearest unit: {note["name"]} · ETA ~{note["eta"]} min</div>',
-                unsafe_allow_html=True,
-            )
-            st.caption(
-                "Simulated payload — this is the exact message handed to an SMS gateway "
-                "(e.g. Twilio) the moment the node regains connectivity."
-            )
-            with st.expander("📟 Responder view — what the dispatched unit receives"):
-                st.markdown(f"### 🚨 {note['urgency']} ALERT")
-                st.write(f"**Assigned to:** {note['name']} ({note['rtype']})")
-                st.write(f"**Location:** {note['lat']:.5f}, {note['lon']:.5f}")
-                st.write(f"**Distance:** {note['dist']} km · **ETA:** ~{note['eta']} min")
-                st.map(pd.DataFrame([{"lat": note["lat"], "lon": note["lon"]}]), zoom=11)
-        else:
-            st.warning(f"Alert #{note['alert_id']} logged — broadcast to all neighbours.")
+        st.caption(
+            f"📍 Location: **{st.session_state.lat_input:.5f}, "
+            f"{st.session_state.lon_input:.5f}**"
+        )
+
+        with st.form("alert_form", clear_on_submit=False):
+            farmer_name = st.text_input("Your name", "Anonymous Farmer")
+            lat = st.number_input("Latitude", format="%.5f", key="lat_input")
+            lon = st.number_input("Longitude", format="%.5f", key="lon_input")
+            description = st.text_input("Landmark / description", "e.g. 3km N of the red dune")
+            urgency = st.selectbox("Urgency", ["HIGH", "CRITICAL"])
+            submitted = st.form_submit_button("🚨 Send alert")
+
+        if submitted:
+            payload = {
+                "farmer_name": farmer_name,
+                "lat": lat,
+                "lon": lon,
+                "description": description,
+                "urgency": urgency,
+            }
+            try:
+                resp = requests.post(
+                    f"{EDGE_API_URL}/alerts/create", json=payload, timeout=5
+                ).json()
+            except requests.RequestException as exc:
+                st.error(f"Could not reach edge API: {exc}")
+                resp = None
+
+            if resp:
+                dist = resp.get("distance_km")
+                eta = round(dist / ASSUMED_SPEED_KMH * 60) if dist else None
+                st.session_state.last_dispatch = {
+                    "alert_lat": lat,
+                    "alert_lon": lon,
+                    "responder_lat": resp.get("responder_lat"),
+                    "responder_lon": resp.get("responder_lon"),
+                    "name": resp.get("closest_responder"),
+                    "distance": dist,
+                }
+                st.session_state.last_notification = {
+                    "alert_id": resp.get("alert_id"),
+                    "name": resp.get("closest_responder"),
+                    "rtype": resp.get("responder_type"),
+                    "dist": dist,
+                    "eta": eta,
+                    "phone": "+971 50 123 4567",  # demo placeholder (simulated payload)
+                    "lat": lat,
+                    "lon": lon,
+                    "urgency": urgency,
+                }
+                st.rerun()
+
+        # Feedback loop: persistent "last dispatch" panel with a simulated SMS.
+        note = st.session_state.last_notification
+        if note:
+            if note["dist"] is not None:
+                st.success(
+                    f"✅ Alert #{note['alert_id']} dispatched → **{note['name']}** "
+                    f"({note['rtype']}) · {note['dist']} km · ETA ~{note['eta']} min"
+                )
+                st.markdown(
+                    '<div class="sms-payload">📨 SMS PAYLOAD GENERATED<br>'
+                    f'To: {note["phone"]}<br>'
+                    f'{note["urgency"]} alert at {note["lat"]:.5f}, {note["lon"]:.5f}<br>'
+                    f'Nearest unit: {note["name"]} · ETA ~{note["eta']} min</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Simulated payload — this is the exact message handed to an SMS gateway "
+                    "(e.g. Twilio) the moment the node regains connectivity."
+                )
+                with st.expander("📟 Responder view — what the dispatched unit receives"):
+                    st.markdown(f"### 🚨 {note['urgency']} ALERT")
+                    st.write(f"**Assigned to:** {note['name']} ({note['rtype']})")
+                    st.write(f"**Location:** {note['lat']:.5f}, {note['lon']:.5f}")
+                    st.write(f"**Distance:** {note['dist']} km · **ETA:** ~{note['eta']} min")
+                    st.map(pd.DataFrame([{"lat": note["lat"], "lon": note["lon"]}]), zoom=11)
+            else:
+                st.warning(f"Alert #{note['alert_id']} logged — broadcast to all neighbours.")
+
+
+responders = fetch("/responders")
+alerts = fetch("/alerts")
+
+interactive_map_and_form(responders, alerts)
 
 # --- alert log -------------------------------------------------------------
 st.subheader("Alert log")

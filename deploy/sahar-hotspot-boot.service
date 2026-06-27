@@ -1,0 +1,13 @@
+[Unit]
+Description=Sahar-Connect Wi-Fi Hotspot Auto-Enabler
+After=NetworkManager.service network-online.target
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/bin/nmcli connection up sahar-hotspot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

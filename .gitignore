@@ -19,5 +19,6 @@ local_data/
 .idea/
 .vscode/
 
-# Internal working doc — not part of the public submission
+# Internal working docs — not part of the public submission
 HANDOFF.md
+TECHNICAL_HANDOFF.md
