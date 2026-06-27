@@ -280,6 +280,8 @@ def interactive_map_and_form(responders, alerts):
                     "urgency": urgency,
                 }
                 st.rerun()
+            elif resp:
+                st.error(f"API Error: {resp}")
 
         # Feedback loop: persistent "last dispatch" panel with a simulated SMS.
         note = st.session_state.last_notification
