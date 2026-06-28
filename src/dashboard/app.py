@@ -117,11 +117,22 @@ except requests.RequestException:
     st.stop()
 
 
-def fetch(path):
+def fetch(endpoint):
     try:
-        return requests.get(f"{EDGE_API_URL}{path}", timeout=5).json()
+        return requests.get(f"{EDGE_API_URL}{endpoint}", timeout=2).json()
     except requests.RequestException:
         return []
+
+def resolve_edited_alerts():
+    edits = st.session_state.get("alert_log_editor", {}).get("edited_rows", {})
+    if edits:
+        for row_idx, changes in edits.items():
+            if changes.get("resolved") is True:
+                try:
+                    alert_id = st.session_state._current_alerts[row_idx]["id"]
+                    requests.post(f"{EDGE_API_URL}/alerts/{alert_id}/resolve", timeout=2)
+                except (requests.RequestException, IndexError, KeyError):
+                    pass
 
 
 @st.cache_resource
@@ -332,6 +343,13 @@ interactive_map_and_form(responders, alerts)
 # --- alert log -------------------------------------------------------------
 st.subheader("Alert log")
 if alerts:
-    st.dataframe(pd.DataFrame(alerts), use_container_width=True)
+    st.session_state._current_alerts = alerts
+    st.data_editor(
+        pd.DataFrame(alerts),
+        use_container_width=True,
+        disabled=["id", "farmer_name", "lat", "lon", "landmark", "urgency", "timestamp", "synced"],
+        key="alert_log_editor",
+        on_change=resolve_edited_alerts
+    )
 else:
     st.info("No alerts yet.")
